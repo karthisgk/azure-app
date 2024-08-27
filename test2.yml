@@ -1,0 +1,76 @@
+# Docs for the Azure Web Apps Deploy action: https://go.microsoft.com/fwlink/?linkid=2134798
+# More GitHub Actions for Azure: https://go.microsoft.com/fwlink/?linkid=2135048
+
+name: Deployment of baydig-dev-rpm-acs-service to master branch
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  AZURE_FUNCTIONAPP_PACKAGE_PATH: "." # set this to the path to your web app project, defaults to the repository root
+  NODE_VERSION: "16.x" # set this to the node version to use (supports 8.x, 10.x, 12.x)
+  RESOURCE_GROUP_NAME: "baydig-dev-rpm-app-services"
+  FUNCTION_APP_NAME: "baydig-dev-rpm-acs-service"
+
+jobs:
+  build-and-deploy:
+    runs-on: [self-hosted, npd, Windows]
+    environment: dev
+    steps:
+      # checkout the repo
+      - name: "Checkout Github Action"
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: npm install, build, and test
+        run: |
+          npm install
+          npm run build --if-present
+          npm run test --if-present
+
+      - name: Login via Az Module
+        uses: azure/login@v1
+        with:
+          creds: ${{secrets.AZURE_CREDENTIALS_RPM_DEV}}
+          enable-AzPSSession: true
+
+      - name: Get publish Profile
+        id: fncapp
+        shell: pwsh
+        run: |
+          if ($null -eq (Get-InstalledModule -Name Az.Websites -ErrorAction SilentlyContinue)) {
+            Install-Module -Name Az.Websites -AllowClobber -Force -ErrorAction Stop | Out-Null
+          }
+          $profile = Get-AzWebAppPublishingProfile `
+              -ResourceGroupName ${{ env.RESOURCE_GROUP_NAME }} `
+              -Name ${{ env.FUNCTION_APP_NAME }}
+          $profile = $profile.Replace("`r", "").Replace("`n", "")
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "profile=$profile"
+
+      - name: "Run Azure Functions Action and deploy"
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ env.FUNCTION_APP_NAME }}
+          slot-name: Production
+          publish-profile: ${{ steps.fncapp.outputs.profile }}
+          package: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+      
+      - name: Reset publish Profile
+        shell: pwsh
+        run: |
+          $profile = Reset-AzWebAppPublishingProfile `
+              -ResourceGroupName ${{ env.RESOURCE_GROUP_NAME }} `
+              -Name ${{ env.FUNCTION_APP_NAME }}
+          $profile = ""
+      
+      # Azure logout
+      - name: logout
+        run: |
+              az logout
+        if: always()
